@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "tots-iridium-sbd-parser"
+version = "0.0.14"
+description = "Parsing of Iridium SBD files for ToTS sediment traps"
+authors = ["Guilherme Castelão <guilherme@castelao.net>"]
+license = "BSD"
+readme = "README.md"
+packages = [{include = "tots_iridium_sbd_parser"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+click = ">=6.7"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

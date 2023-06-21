@@ -19,6 +19,17 @@ _sbd_mo_message_types = {
     0x4a: 'nack',
 }
 
+_sb_mo_messages_with_headers = {
+    'unencrypted-position',
+    'encrypted-position',
+    'encrypted-tlv-data',
+    'unencrypted-tlv-data',
+    'unencrypted-chained-position',
+    'encrypted-chained-position',
+    'unencrypted-engineering',
+    'encrypted-engineering',
+}
+
 _solar_edge_message_types = {
     0x00: 'radio-silence-in',
     0x01: 'radio-silence-out',
@@ -73,13 +84,17 @@ class IridiumSBD():
 
         What is the syntax for the MO Receipt Confirmation???
         """
-        self.attributes = {'header': collections.OrderedDict()}
+        self.attributes = {
+            'raw': binascii.hexlify(raw, " "),
+        }
 
         message_type =  _sbd_mo_message_types[raw[0]]
         self.attributes['message-type'] = message_type
+        if message_type not in _sb_mo_messages_with_headers:
+            return
 
-        self.header = raw[1]
-
+        self.attributes['header'] = collections.OrderedDict()
+        self.attributes['header']['raw-bin'] = f'0b{raw[1]:b}'
         message_type = _solar_edge_message_types[raw[1] & 0b00011111]
         self.attributes['header']['message-type'] = message_type
         if message_type == 'radio-silence-in':
@@ -117,10 +132,11 @@ def dump(file):
     """Show isbd message header as text
     """
     raw = file.read()
-    print(f'Parsing MO message {binascii.hexlify(raw, " ")}...')
+    print(f'Parsing MO message...')
     msg = IridiumSBD(raw)
 
+    print(f'raw-hex: {msg.attributes["raw"]}')
     print(f'message-type: {msg.attributes["message-type"]}')
-    print(f'Header 0b{msg.header:b}:')
+    print('header:')
     for value in msg.attributes['header']:
         print(f'  - {value}: {msg.attributes["header"][value]}')

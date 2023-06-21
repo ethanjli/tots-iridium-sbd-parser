@@ -6,14 +6,20 @@ This provides a small and simple command-line tool to decode an SBD file and dis
 
 ## Usage
 
-To use this tool, it's recommended to [install pipx](https://pypa.github.io/pipx/) and then use pipx to install this tool, via:
+To use this tool, it's recommended to [install pipx](https://pypa.github.io/pipx/) and then use pipx to install this tool, via the following command in your terminal:
 ```
 pipx install git+https://github.com/ethanjli/tots-iridium-sbd-parser.git
 ```
 
+Then you can run the tool in your terminal as:
+```
+tots-sbd-decode [filename]
+```
+where you should replace `[filename]` with the path of the Iridium SBD MO (mobile-originated) file you're trying to parse.
+
 ### Development
 
-If you already have [Poetry installed](https://python-poetry.org/docs/), you can run `poetry install` and then `poetry run cli [filename]`, where `[filename]` should be replaced with the file path of the Iridium SBD MO (mobile-originated) file you're trying to parse.
+If you already have [Poetry installed](https://python-poetry.org/docs/), you can run `poetry install` and then `poetry run cli [filename]`, where you should replace `[filename]` with the path of the Iridium SBD MO (mobile-originated) file you're trying to parse.
 
 
 ## Licensing

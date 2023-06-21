@@ -3,15 +3,15 @@ name = "tots-iridium-sbd-parser"
 version = "0.0.14"
 description = "Parsing of Iridium SBD MO files for ToTS sediment traps"
 authors = ["Ethan Li <lietk12@gmail.com>"]
-license = "BSD"
+license = "(Apache-2.0 OR BlueOak-1.0.0)"
 readme = "README.md"
-packages = [{include = "sbd"}]
+packages = [{include = "tots_sbd_decode"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 
 [tool.poetry.scripts]
-tots-sbd-decode = 'sbd.cli:main'
+tots-sbd-decode = 'tots_sbd_decode.cli:main'
 
 
 [build-system]

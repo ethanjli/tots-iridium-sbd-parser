@@ -132,7 +132,7 @@ def dump(file):
     """Show isbd message header as text
     """
     raw = file.read()
-    print(f'Parsing MO message...')
+    print('Parsing MO message...')
     msg = IridiumSBD(raw)
 
     print(f'raw-hex: {msg.attributes["raw"]}')

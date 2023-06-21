@@ -5,7 +5,7 @@
 
 import argparse
 
-from .sbd import dump
+from .parse import dump
 
 
 def main():

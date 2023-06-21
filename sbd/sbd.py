@@ -25,6 +25,18 @@ class Message():
         return self.content[self.offset:][item]
 
 
+_message_types = {
+    0x00: 'radio-silence-in',
+    0x01: 'radio-silence-out',
+    0x03: 'start-motion',
+    0x04: 'stop-motion',
+    0x05: 'in-motion',
+    0x14: 'null-gps',
+    0x17: 'user-position-message',
+    0x1b: 'position',
+}
+
+
 class IridiumSBD():
     """Parses an Iridium SBD messge.
 
@@ -98,19 +110,45 @@ class IridiumSBD():
             assert False, 'Unknown message type'
 
         print('Parsing MO encrypted position message...')
-        print(f'Message header: 0b{raw[1]:b}')
-        self.attributes['header']['powersave-mode'] = bool((raw[1] & (0b1 << 7)) >> 7)
-        self.attributes['header']['secondary-over-50%'] = bool((raw[1] & (0b1 << 6)) >> 6)
-        self.attributes['header']['gps-fix'] = '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
+        print(f'Iridium Edge Solar Message header: 0b{raw[1]:b}')
+
+        message_type = _message_types[raw[1] & 0b00011111]
+        self.attributes['header']['message-type'] = message_type
+        if message_type == 'radio-silence-in':
+            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
+            assert (raw[1] & (0b1 << 5)) >> 5 == 1, 'bit 5 of message header has unexpected value'
+            return
+        if message_type == 'radio-silence-out':
+            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
+            self.attributes['header']['gps-fix'] = (
+                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
+            )
+            return
+        if message_type in ('start-motion', 'stop-motion', 'in-motion'):
+            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
+            self.attributes['header']['gps-fix'] = (
+                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
+            )
+            return
+        if message_type == 'null-gps':
+            self.attributes['header']['powersave-mode'] = bool((raw[1] & (0b1 << 5)) >> 5)
+        if message_type == 'user-position':
+            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
+            self.attributes['header']['gps-fix'] = (
+                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
+            )
+        if message_type == 'position':
+            self.attributes['header']['powersave-mode'] = bool((raw[1] & (0b1 << 7)) >> 7)
+            self.attributes['header']['secondary-over-50%'] = bool((raw[1] & (0b1 << 6)) >> 6)
+            self.attributes['header']['gps-fix'] = (
+                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
+            )
 
 
-def dump(file, imei):
+def dump(file):
     """Show isbd message header as text
     """
     msg = IridiumSBD(file.read())
-    if imei:
-        print(msg.attributes['header']['IMEI'])
-        return
 
     print('Header section:')
     for value in msg.attributes['header']:

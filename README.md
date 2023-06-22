@@ -13,13 +13,20 @@ pipx install git+https://github.com/ethanjli/tots-iridium-sbd-parser.git
 
 Then you can run the tool in your terminal as:
 ```
-tots-sbd-decode [filename]
+tots-sbd-decode [sbd-filename]
 ```
-where you should replace `[filename]` with the path of the Iridium SBD MO (mobile-originated) file you're trying to parse.
+where you should replace `[sbd-filename]` with the path of the Iridium SBD MO (mobile-originated) file you're trying to parse. If you want to decode an SBD MO message with a 3DES-encrypted payload, you can also provide a key file:
+```
+tots-sbd-decode [sbd-filename] --key [key-filename]
+```
+where you should replace `[key-filename]` with the path of the key file you want to use. The key file should consist of a 48-character hex-encoded string, for example:
+```
+8DE483E58FE9DFE3FCB3EE48C29C77850DEB7BBDC4EE6808
+```
 
 ### Development
 
-If you already have [Poetry installed](https://python-poetry.org/docs/), you can run `poetry install` and then `poetry run cli [filename]`, where you should replace `[filename]` with the path of the Iridium SBD MO (mobile-originated) file you're trying to parse.
+If you already have [Poetry installed](https://python-poetry.org/docs/), you can run `poetry install` and then you can run any of the commands listed above, replacing `tots-sbd-decode` with `poetry run tots-sbd-decode`.
 
 
 ## Licensing

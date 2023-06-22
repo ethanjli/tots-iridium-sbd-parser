@@ -58,6 +58,5 @@ docs/_build/
 # Vim swap
 *.swp
 
-# Dynamic docs
-docs/isbd.rst
-docs/modules.rst
+# Secrets
+secrets/

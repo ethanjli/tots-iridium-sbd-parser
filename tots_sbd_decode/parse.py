@@ -4,6 +4,8 @@
 import binascii
 import collections
 
+from . import des
+
 # Position Messages
 
 _sbd_mo_position_message_types = {
@@ -23,6 +25,69 @@ _position_message_subtypes = {
     0x17: 'user-position-message',
     0x1b: 'position',
 }
+
+def _parse_position_message_header(message_type, raw, attributes):
+    attributes['position-message-header'] = collections.OrderedDict()
+    header_attributes = attributes['position-message-header']
+
+    header = raw[0]
+    header_attributes['raw-bin'] = f'0b{header:b}'
+    message_subtype = _position_message_subtypes[header & 0b00011111]
+    header_attributes['message-subtype'] = message_subtype
+
+    if message_subtype == 'radio-silence-in':
+        _parse_position_header_message_count(header, header_attributes)
+        if (header & (0b1 << 5)) >> 5 != 1:
+            print('Error: bit 5 of message header has unexpected value')
+        _check_position_message_length(message_type, message_subtype, 9, raw)
+    elif message_subtype == 'radio-silence-out':
+        _parse_position_header_message_count(header, header_attributes)
+        _parse_position_header_gps_quality(header, header_attributes)
+        _check_position_message_length(message_type, message_subtype, 9, raw)
+    elif message_subtype in ('start-motion', 'stop-motion', 'in-motion'):
+        _parse_position_header_message_count(header, header_attributes)
+        _parse_position_header_gps_quality(header, header_attributes)
+        _check_position_message_length(message_type, message_subtype, 9, raw)
+    elif message_subtype == 'null-gps':
+        _parse_position_header_powersave_mode(header, 5, header_attributes)
+        _check_position_message_length(message_type, message_subtype, 9, raw)
+    elif message_subtype == 'user-position':
+        _parse_position_header_message_count(header, header_attributes)
+        _parse_position_header_gps_quality(header, header_attributes)
+        _check_position_message_length(message_type, message_subtype, 17, raw)
+    elif message_subtype == 'position':
+        _parse_position_header_powersave_mode(header, 7, header_attributes)
+        _parse_position_header_secondary_battery_level(header, header_attributes)
+        _parse_position_header_gps_quality(header, header_attributes)
+        _check_position_message_length(message_type, message_subtype, 9, raw)
+
+    return message_subtype
+
+def _parse_position_message_payload(message_subtype, payload, attributes):
+    attributes['payload'] = collections.OrderedDict()
+    payload_attributes = attributes['payload']
+
+
+    payload_attributes['raw-hex'] = binascii.hexlify(payload, ' ', 2)
+
+    if message_subtype == 'radio-silence-in':
+        if payload[:6] != b'\x00\x00\x00\x00\x00\x00':
+            print('Error: first six bytes of payload have unexpected value')
+        payload_attributes['triggered-magnetically'] = (payload[6] & (0b1 << 7)) >> 7
+    elif message_subtype == 'radio-silence-out':
+        # TODO: parse latitude & longitude
+        payload_attributes['triggered-magnetically'] = (payload[6] & (0b1 << 7)) >> 7
+        payload_attributes['failsafe-timed-out'] = (payload[6] & (0b1 << 6)) >> 6
+    elif message_subtype in ('start-motion', 'stop-motion', 'in-motion'):
+        pass
+    elif message_subtype == 'null-gps':
+        pass
+    elif message_subtype == 'user-position':
+        pass
+    elif message_subtype == 'position':
+        pass
+
+    return message_subtype
 
 def _check_position_message_length(message_type, message_subtype, expected_length, raw):
     if message_type in ('unencrypted-position', 'encrypted-position'):
@@ -57,6 +122,15 @@ def _parse_tlv(raw):
     value = raw[2:]
     return (header, length, value)
 
+# Encrypted Messages
+
+_sbd_mo_encrypted_message_types = {
+    0x01: 'encrypted-position',
+    0x02: 'encrypted-tlv-data',
+    0x38: 'encrypted-chained-position',
+    0x3a: 'encrypted-engineering',
+}
+
 # All Messages
 
 _sbd_mo_message_types = {
@@ -74,13 +148,6 @@ _sbd_mo_message_types = {
     0x4a: 'nak',
 }
 
-_sbd_mo_encrypted_message_types = {
-    0x01: 'encrypted-position',
-    0x02: 'encrypted-tlv-data',
-    0x38: 'encrypted-chained-position',
-    0x3a: 'encrypted-engineering',
-}
-
 def _check_encrypted_message_length(message_type, raw):
     if len(raw) < 8:
         print(f'Error: {message_type} message has unexpected length {len(raw)}')
@@ -95,7 +162,7 @@ class IridiumSBD():
     Attributes:
         header: A dictionary with the section header of an ISBD message.
     """
-    def __init__(self, msg=None):
+    def __init__(self, msg=None, key=None):
         """Initialize an IridiumSBD object.
 
         Args:
@@ -103,15 +170,15 @@ class IridiumSBD():
                 load(msg).
         """
         if msg is not None:
-            self.load(msg)
+            self.load(msg, key)
 
     def __str__(self):
         return str(self.attributes)
 
-    def load(self, raw):
+    def load(self, raw, key):
         """Parse an Iridium SBD binary message."""
         self.attributes = collections.OrderedDict()
-        self.attributes['raw-hex'] = binascii.hexlify(raw, " ", 2)
+        self.attributes['raw-hex'] = binascii.hexlify(raw, ' ', 2)
 
         message_type =  _sbd_mo_message_types[raw[0]]
         self.attributes['message-type'] = message_type
@@ -119,7 +186,7 @@ class IridiumSBD():
             _check_message_length(message_type, raw, 10, 10)
             _check_encrypted_message_length(message_type, raw[1])
         if message_type in _sbd_mo_position_message_types:
-            self._parse_position_message(message_type, raw[1:])
+            self._parse_position_message(message_type, raw[1:], key)
         if message_type == 'config-updated':
             _check_message_length(message_type, raw, 8, 8)
             self._parse_config_updated_message(raw[1:])
@@ -137,40 +204,15 @@ class IridiumSBD():
             _check_message_length(message_type, raw, 7, 7)
             self._parse_nak_message(raw[1:])
 
-    def _parse_position_message(self, message_type, raw):
-        self.attributes['position-message-header'] = collections.OrderedDict()
-        header_attributes = self.attributes['position-message-header']
+    def _parse_position_message(self, message_type, raw, key):
+        message_subtype = _parse_position_message_header(message_type, raw, self.attributes)
 
-        header = raw[0]
-        header_attributes['raw-bin'] = f'0b{header:b}'
-        message_subtype = _position_message_subtypes[header & 0b00011111]
-        header_attributes['message-subtype'] = message_subtype
+        payload = raw[1:]
+        if message_type in _sbd_mo_encrypted_message_types.values():
+            crypto = des.triple_des(key, pad=b'0xff')
+            payload = crypto.decrypt(raw[1:])
 
-        if message_subtype == 'radio-silence-in':
-            _parse_position_header_message_count(header, header_attributes)
-            if (header & (0b1 << 5)) >> 5 != 1:
-                print('Error: bit 5 of message header has unexpected value')
-            _check_position_message_length(message_type, message_subtype, 9, raw)
-        elif message_subtype == 'radio-silence-out':
-            _parse_position_header_message_count(header, header_attributes)
-            _parse_position_header_gps_quality(header, header_attributes)
-            _check_position_message_length(message_type, message_subtype, 9, raw)
-        elif message_subtype in ('start-motion', 'stop-motion', 'in-motion'):
-            _parse_position_header_message_count(header, header_attributes)
-            _parse_position_header_gps_quality(header, header_attributes)
-            _check_position_message_length(message_type, message_subtype, 9, raw)
-        elif message_subtype == 'null-gps':
-            _parse_position_header_powersave_mode(header, 5, header_attributes)
-            _check_position_message_length(message_type, message_subtype, 9, raw)
-        elif message_subtype == 'user-position':
-            _parse_position_header_message_count(header, header_attributes)
-            _parse_position_header_gps_quality(header, header_attributes)
-            _check_position_message_length(message_type, message_subtype, 17, raw)
-        elif message_subtype == 'position':
-            _parse_position_header_powersave_mode(header, 7, header_attributes)
-            _parse_position_header_secondary_battery_level(header, header_attributes)
-            _parse_position_header_gps_quality(header, header_attributes)
-            _check_position_message_length(message_type, message_subtype, 9, raw)
+        _parse_position_message_payload(message_subtype, payload, self.attributes)
 
     def _parse_config_updated_message(self, raw):
         self.attributes['tlv'] = collections.OrderedDict()
@@ -204,7 +246,7 @@ class IridiumSBD():
         tlv_attributes['type'] = _tlv_header_types[header]
         tlv_attributes['length'] = length
 
-        tlv_attributes['value-hex'] = binascii.hexlify(value, " ", 2)
+        tlv_attributes['value-hex'] = binascii.hexlify(value, ' ', 2)
 
         self.attributes['crc'] = f'0x{raw[len(raw)-3:]:x}'
         print('TODO: check CRC against TLV value')
@@ -250,10 +292,7 @@ def _print_attributes(attributes, nest_level=0):
         print(f' {value}')
 
 
-def dump(file):
-    """Show isbd message header as text
-    """
-    raw = file.read()
-    msg = IridiumSBD(raw)
-
+def dump(raw, key):
+    """Parse and display SBD message as structured data."""
+    msg = IridiumSBD(raw, key)
     _print_attributes(msg.attributes)

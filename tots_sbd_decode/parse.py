@@ -4,6 +4,61 @@
 import binascii
 import collections
 
+# Position Messages
+
+_sbd_mo_position_message_types = {
+    'unencrypted-position',
+    'encrypted-position',
+    'unencrypted-chained-position',
+    'encrypted-chained-position',
+}
+
+_position_message_subtypes = {
+    0x00: 'radio-silence-in',
+    0x01: 'radio-silence-out',
+    0x03: 'start-motion',
+    0x04: 'stop-motion',
+    0x05: 'in-motion',
+    0x14: 'null-gps',
+    0x17: 'user-position-message',
+    0x1b: 'position',
+}
+
+def _check_position_message_length(message_type, message_subtype, expected_length, raw):
+    if message_type in ('unencrypted-position', 'encrypted-position'):
+        if len(raw) != expected_length:
+            print(f'Error: {message_subtype} message has unexpected length {len(raw)}')
+        return
+
+def _parse_position_header_message_count(header, attributes):
+    attributes['message-count'] = (header & 0b11000000) >> 6
+
+def _parse_position_header_gps_quality(header, attributes):
+    attributes['gps-quality'] = (
+        '3D' if bool((header & (0b1 << 5)) >> 5) else '2D'
+    )
+
+def _parse_position_header_powersave_mode(header, position, attributes):
+    attributes['powersave-mode'] = bool((header & (0b1 << position)) >> position)
+
+def _parse_position_header_secondary_battery_level(header, attributes):
+    attributes['secondary-over-50%'] = bool((header & (0b1 << 6)) >> 6)
+
+# TLV Messages
+
+_tlv_header_types = {
+    0x23: 'config-updated',
+    0x4a: 'nak',
+}
+
+def _parse_tlv(raw):
+    header = raw[0]
+    length = raw[1]
+    value = raw[2:]
+    return (header, length, value)
+
+# All Messages
+
 _sbd_mo_message_types = {
     0x00: 'unencrypted-position',
     0x01: 'encrypted-position',
@@ -16,30 +71,23 @@ _sbd_mo_message_types = {
     0x38: 'encrypted-chained-position',
     0x39: 'unencrypted-engineering',
     0x3a: 'encrypted-engineering',
-    0x4a: 'nack',
+    0x4a: 'nak',
 }
 
-_sb_mo_messages_with_headers = {
-    'unencrypted-position',
-    'encrypted-position',
-    'encrypted-tlv-data',
-    'unencrypted-tlv-data',
-    'unencrypted-chained-position',
-    'encrypted-chained-position',
-    'unencrypted-engineering',
-    'encrypted-engineering',
+_sbd_mo_encrypted_message_types = {
+    0x01: 'encrypted-position',
+    0x02: 'encrypted-tlv-data',
+    0x38: 'encrypted-chained-position',
+    0x3a: 'encrypted-engineering',
 }
 
-_solar_edge_message_types = {
-    0x00: 'radio-silence-in',
-    0x01: 'radio-silence-out',
-    0x03: 'start-motion',
-    0x04: 'stop-motion',
-    0x05: 'in-motion',
-    0x14: 'null-gps',
-    0x17: 'user-position-message',
-    0x1b: 'position',
-}
+def _check_encrypted_message_length(message_type, raw):
+    if len(raw) < 8:
+        print(f'Error: {message_type} message has unexpected length {len(raw)}')
+
+def _check_message_length(message_type, raw, min_len, max_len):
+    if len(raw) < min_len or len(raw) > max_len:
+        print(f'Error: {message_type} message has unexpected length {len(raw)}')
 
 class IridiumSBD():
     """Parses an Iridium SBD messge.
@@ -61,82 +109,151 @@ class IridiumSBD():
         return str(self.attributes)
 
     def load(self, raw):
-        """Parse an Iridium SBD binary message.
-
-        Args:
-            msg (byte): A binary ISBD message (optional). If given, runs
-                load(msg).
-
-        The input (msg) is the Iridium SBD message in its original
-            binary format.
-
-        Big endian
-        Protocol Revision: 1
-        Data segmented into information elements (IEs)
-                IEI ID      1
-                IEI length  2 (content length, i.e. after the 3 initial bytes)
-                IEI content N
-        Information Elements Identifiers (IEI)
-                MO Header IEI                 0x01
-                MO Payload IEI                0x02
-                MO Location Information IEI   0x03
-                MO Confirmation IEI           0x05
-
-        What is the syntax for the MO Receipt Confirmation???
-        """
-        self.attributes = {
-            'raw': binascii.hexlify(raw, " "),
-        }
+        """Parse an Iridium SBD binary message."""
+        self.attributes = collections.OrderedDict()
+        self.attributes['raw-hex'] = binascii.hexlify(raw, " ", 2)
 
         message_type =  _sbd_mo_message_types[raw[0]]
         self.attributes['message-type'] = message_type
-        if message_type not in _sb_mo_messages_with_headers:
-            return
-
-        self.attributes['header'] = collections.OrderedDict()
-        self.attributes['header']['raw-bin'] = f'0b{raw[1]:b}'
-        message_type = _solar_edge_message_types[raw[1] & 0b00011111]
-        self.attributes['header']['message-type'] = message_type
-        if message_type == 'radio-silence-in':
-            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
-            assert (raw[1] & (0b1 << 5)) >> 5 == 1, 'bit 5 of message header has unexpected value'
-            return
-        if message_type == 'radio-silence-out':
-            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
-            self.attributes['header']['gps-fix'] = (
-                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
-            )
-            return
-        if message_type in ('start-motion', 'stop-motion', 'in-motion'):
-            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
-            self.attributes['header']['gps-fix'] = (
-                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
-            )
-            return
-        if message_type == 'null-gps':
-            self.attributes['header']['powersave-mode'] = bool((raw[1] & (0b1 << 5)) >> 5)
+        if message_type in _sbd_mo_encrypted_message_types:
+            _check_message_length(message_type, raw, 10, 10)
+            _check_encrypted_message_length(message_type, raw[1])
+        if message_type in _sbd_mo_position_message_types:
+            self._parse_position_message(message_type, raw[1:])
+        if message_type == 'config-updated':
+            _check_message_length(message_type, raw, 8, 8)
+            self._parse_config_updated_message(raw[1:])
         if message_type == 'user-position':
-            self.attributes['header']['message-count'] = (raw[1] & 0b11000000) >> 6
-            self.attributes['header']['gps-fix'] = (
-                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
-            )
-        if message_type == 'position':
-            self.attributes['header']['powersave-mode'] = bool((raw[1] & (0b1 << 7)) >> 7)
-            self.attributes['header']['secondary-over-50%'] = bool((raw[1] & (0b1 << 6)) >> 6)
-            self.attributes['header']['gps-fix'] = (
-                '3D' if bool((raw[1] & (0b1 << 5)) >> 5) else '2D'
-            )
+            _check_message_length(message_type, raw, 18, 18)
+        if message_type == 'user-data':
+            _check_message_length(message_type, raw, 7, 66)
+        if message_type in ('user-data', 'unencrypted-tlv-data'):
+            self._parse_tlv_data_message(raw[1:])
+        if message_type in ('unencrypted-chained-position', 'encrypted-chained-position'):
+            _check_message_length(message_type, raw, 18, 66)
+        if message_type in ('unencrypted-engineering', 'encrypted-engineering'):
+            _check_message_length(message_type, raw, 33, 33)
+        if message_type == 'nak':
+            _check_message_length(message_type, raw, 7, 7)
+            self._parse_nak_message(raw[1:])
+
+    def _parse_position_message(self, message_type, raw):
+        self.attributes['position-message-header'] = collections.OrderedDict()
+        header_attributes = self.attributes['position-message-header']
+
+        header = raw[0]
+        header_attributes['raw-bin'] = f'0b{header:b}'
+        message_subtype = _position_message_subtypes[header & 0b00011111]
+        header_attributes['message-subtype'] = message_subtype
+
+        if message_subtype == 'radio-silence-in':
+            _parse_position_header_message_count(header, header_attributes)
+            if (header & (0b1 << 5)) >> 5 != 1:
+                print('Error: bit 5 of message header has unexpected value')
+            _check_position_message_length(message_type, message_subtype, 9, raw)
+        elif message_subtype == 'radio-silence-out':
+            _parse_position_header_message_count(header, header_attributes)
+            _parse_position_header_gps_quality(header, header_attributes)
+            _check_position_message_length(message_type, message_subtype, 9, raw)
+        elif message_subtype in ('start-motion', 'stop-motion', 'in-motion'):
+            _parse_position_header_message_count(header, header_attributes)
+            _parse_position_header_gps_quality(header, header_attributes)
+            _check_position_message_length(message_type, message_subtype, 9, raw)
+        elif message_subtype == 'null-gps':
+            _parse_position_header_powersave_mode(header, 5, header_attributes)
+            _check_position_message_length(message_type, message_subtype, 9, raw)
+        elif message_subtype == 'user-position':
+            _parse_position_header_message_count(header, header_attributes)
+            _parse_position_header_gps_quality(header, header_attributes)
+            _check_position_message_length(message_type, message_subtype, 17, raw)
+        elif message_subtype == 'position':
+            _parse_position_header_powersave_mode(header, 7, header_attributes)
+            _parse_position_header_secondary_battery_level(header, header_attributes)
+            _parse_position_header_gps_quality(header, header_attributes)
+            _check_position_message_length(message_type, message_subtype, 9, raw)
+
+    def _parse_config_updated_message(self, raw):
+        self.attributes['tlv'] = collections.OrderedDict()
+        tlv_attributes = self.attributes['tlv']
+
+        tlv_attributes['raw-bin'] = f'0b{raw:b}'
+        (header, length, value) = _parse_tlv(raw[:len(raw)-3])
+        if header not in _tlv_header_types or _tlv_header_types[header] != 'config-updated':
+            print(f'Unexpected header type 0x{header:x}')
+        tlv_attributes['type'] = _tlv_header_types[header]
+        if length != 2:
+            print(f'Unexpected TLV length {length}')
+        tlv_attributes['length'] = length
+
+        if len(value) != 2:
+            print(f'Unexpected value length {len(value)}')
+        config_command = value[0]
+        tlv_attributes['value-config-command'] = config_command
+        success_code = value[1]
+        tlv_attributes['value-success-code'] = success_code
+
+        self.attributes['crc'] = f'0x{raw[len(raw)-3:]:x}'
+        print('TODO: check CRC against TLV value')
+
+    def _parse_tlv_data_message(self, raw):
+        self.attributes['tlv'] = collections.OrderedDict()
+        tlv_attributes = self.attributes['tlv']
+
+        tlv_attributes['raw-bin'] = f'0b{raw:b}'
+        (header, length, value) = _parse_tlv(raw[:len(raw)-3])
+        tlv_attributes['type'] = _tlv_header_types[header]
+        tlv_attributes['length'] = length
+
+        tlv_attributes['value-hex'] = binascii.hexlify(value, " ", 2)
+
+        self.attributes['crc'] = f'0x{raw[len(raw)-3:]:x}'
+        print('TODO: check CRC against TLV value')
+
+    def _parse_nak_message(self, raw):
+        self.attributes['tlv'] = collections.OrderedDict()
+        tlv_attributes = self.attributes['tlv']
+
+        tlv_attributes['raw-bin'] = f'0b{raw:b}'
+        (header, length, value) = _parse_tlv(raw[:len(raw)-3])
+        if header not in _tlv_header_types or _tlv_header_types[header] != 'nak':
+            print(f'Unexpected header type 0x{header:x}')
+        tlv_attributes['type'] = _tlv_header_types[header]
+        if length != 1:
+            print(f'Unexpected TLV length {length}')
+        tlv_attributes['length'] = length
+
+        if len(value) != 1:
+            print(f'Unexpected value length {len(value)}')
+        reason = value[0]
+        nak_reasons = {
+            0x05: 'improperly-formatted',
+        }
+        if reason not in nak_reasons:
+            print(f'Unexpected NAK reason 0x{reason:x}')
+            tlv_attributes['value-reason'] = reason
+        else:
+            tlv_attributes['value-reason'] = nak_reasons[reason]
+
+        self.attributes['crc'] = f'0x{raw[len(raw)-3:]:x}'
+        print('TODO: check CRC against TLV value')
+
+
+def _print_attributes(attributes, nest_level=0):
+    for key, value in attributes.items():
+        for _ in range(nest_level):
+            print('  ', end='')
+        print(f'- {key}:', end='')
+        if isinstance(value, collections.OrderedDict):
+            print()
+            _print_attributes(value, nest_level + 1)
+            continue
+        print(f' {value}')
 
 
 def dump(file):
     """Show isbd message header as text
     """
     raw = file.read()
-    print('Parsing MO message...')
     msg = IridiumSBD(raw)
 
-    print(f'raw-hex: {msg.attributes["raw"]}')
-    print(f'message-type: {msg.attributes["message-type"]}')
-    print('header:')
-    for value in msg.attributes['header']:
-        print(f'  - {value}: {msg.attributes["header"][value]}')
+    _print_attributes(msg.attributes)

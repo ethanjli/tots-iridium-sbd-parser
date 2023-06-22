@@ -16,6 +16,7 @@ def main():
     )
     parser.add_argument('filename')
     args = parser.parse_args()
+    print(f'Decoding {args.filename}...')
     with open(args.filename, 'rb') as file:
         return dump(file)
 

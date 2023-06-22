@@ -209,6 +209,9 @@ class IridiumSBD():
 
         payload = raw[1:]
         if message_type in _sbd_mo_encrypted_message_types.values():
+            if key is None or key == '':
+                print('Error: missing a key to decrypt the payload!')
+                return
             crypto = des.triple_des(key, pad=b'0xff')
             payload = crypto.decrypt(raw[1:])
 

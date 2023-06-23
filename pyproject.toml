@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tots-iridium-sbd-parser"
-version = "0.0.14"
+version = "0.0.15"
 description = "Parsing of Iridium SBD MO files for ToTS sediment traps"
 authors = ["Ethan Li <lietk12@gmail.com>"]
 license = "(Apache-2.0 OR BlueOak-1.0.0)"

@@ -12,19 +12,22 @@ from . import parse
 def main():
     """Utilities for Iridium message parsing."""
     parser = argparse.ArgumentParser(
-        prog='sbd',
-        description='Parse an Iridium SBD MO postion message',
+        prog='tots-sbd-decode',
+        description='Parse an Iridium Edge Solar SBD MO message',
     )
     parser.add_argument(
         'sbd',
         type=argparse.FileType('rb'),
-        help='Path of SBD file to decode',
+        help='Path of the SBD file to decode',
     )
     parser.add_argument(
         '-k', '--key',
         type=argparse.FileType('r'),
         required=False,
-        help='Path of plain-text hex-encoded 3DES key file for decrypting encrypted SBD message',
+        help=(
+            'Path of a plain-text hex-encoded 3DES key file for decrypting the payload of an ',
+            'encrypted SBD message',
+        ),
     )
     parser.add_argument(
         '-v', '--verbose',
@@ -33,7 +36,7 @@ def main():
         help='Print raw binary/hex encodings of parsed values',
     )
     args = parser.parse_args()
-    print(f'Decoding \'{args.sbd.name}\'', end='')
+    print(f'Decoding Iridium Edge Solar SBD MO message \'{args.sbd.name}\'', end='')
     key = None
     if args.key is not None:
         print(f' with key \'{args.key.name}\'', end='')
@@ -42,7 +45,8 @@ def main():
             key = None
         key = binascii.unhexlify(key)
     print('...')
-    return parse.dump(args.sbd.read(), key, verbose=args.verbose)
+    msg = parse.IridiumSBD(args.sbd.read(), key)
+    print_attrs(msg.attrs, verbose=args.verbose)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ python = "^3.10"
 
 [tool.poetry.scripts]
 tots-sbd-decode = 'tots_sbd_decode.cli:main'
+tots-report-decode = 'tots_sbd_decode.cli_report:main'
 
 
 [build-system]

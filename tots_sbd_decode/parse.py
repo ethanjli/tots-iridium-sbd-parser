@@ -4,6 +4,7 @@
 import binascii
 import collections
 import datetime
+import traceback
 
 from . import des
 
@@ -129,6 +130,10 @@ def _parse_position_msg_header(header, header_attrs):
     header_attrs['(bin)'] = _binify(header, pad=8)
 
     raw_subtype = header & 0b11111
+    if raw_subtype not in _position_msg_subtypes:
+        print(f'Error: unexpected message subtype 0x{raw_subtype:x}!')
+        return None
+
     msg_subtype = _position_msg_subtypes[raw_subtype]
     match msg_subtype:
         case 'radio-silence-in':
@@ -193,7 +198,7 @@ def _parse_position_radio_msg_status(msg_subtype, status, status_attrs):
             status_attrs['(reserved)-(bin)'] =\
                 _binify(((status[0] & 0b111111), status[1]), pad=(6, 8))
         case _:
-            print(f'Error: unexpected message subtype {msg_subtype}!')
+            print(f'Error: unexpected message subtype 0x{msg_subtype:x}!')
 
 def _parse_timestamp(raw, timestamp_attrs):
     timestamp_attrs['(hex)'] = _hexlify(raw)
@@ -225,24 +230,41 @@ def _parse_position_msg_position_status(status, status_attrs):
         status_attrs['mode'] = _position_msg_status_modes[mode]
     status_attrs['(reserved)'] = _binify(status & 0b111, pad=3)
 
+def _convert_dec_to_dm(dd):
+    # Adapted from https://stackoverflow.com/a/12737895, which is licensed under CC-BY-SA-3.0
+    negative = dd < 0
+    dd = abs(dd)
+    degrees, minutes = divmod(dd * 60, 60)
+    if not negative:
+        return (round(degrees), round(minutes, 5))
+    if degrees > 0:
+        return (round(-degrees), round(minutes, 5))
+    return (round(degrees), round(-minutes, 5))
+
 def _parse_position_lat_long(payload_lat_long, payload_attrs):
     lat = payload_lat_long[0:3]
     payload_attrs['latitude-(hex)'] = _hexlify(lat)
     lat_encoded = int.from_bytes(lat, 'big', signed=False)
     threshold = 2 ** 23 / 90
-    if lat_encoded / threshold > 90:
-        payload_attrs['latitude'] = (180 - lat_encoded / threshold, 'deg S')
-    else:
-        payload_attrs['latitude'] = (lat_encoded / threshold, 'deg N')
+    lat_dec = (
+        -1 * (180 - lat_encoded / threshold) if lat_encoded / threshold > 90
+        else lat_encoded / threshold
+    )
+    payload_attrs['latitude-(decimal)'] = (lat_dec, '°')
+    lat_deg, lat_min = _convert_dec_to_dm(lat_dec)
+    payload_attrs['latitude'] = (f'{lat_deg}° {lat_min:.05f}\'')
 
     long = payload_lat_long[3:6]
     payload_attrs['longitude-(hex)'] = _hexlify(long)
     long_encoded = int.from_bytes(long, 'big', signed=False)
     threshold = 2 ** 23 / 180
-    if long_encoded / threshold > 180:
-        payload_attrs['longitude'] = (360 - long_encoded / threshold, 'deg W')
-    else:
-        payload_attrs['longitude'] = (long_encoded / threshold, 'deg E')
+    long_dec = (
+        -1 * (360 - long_encoded / threshold) if long_encoded / threshold > 180
+        else long_encoded / threshold
+    )
+    payload_attrs['longitude-(decimal)'] = (long_dec, '°')
+    long_deg, long_min = _convert_dec_to_dm(long_dec)
+    payload_attrs['longitude'] = (f'{long_deg}° {long_min:.05f}\'')
 
 def _parse_position_heading_speed(payload_heading_speed, payload_heading_speed_attrs):
     payload_heading_speed_attrs['(hex)'] = _hexlify(payload_heading_speed)
@@ -250,7 +272,7 @@ def _parse_position_heading_speed(payload_heading_speed, payload_heading_speed_a
 
     heading = _isolate_bits(payload_heading_speed, 5, mask=0b111)
     payload_heading_speed_attrs['heading-(bin)'] = _binify(heading, pad=3)
-    payload_heading_speed_attrs['heading'] = (heading * 45, 'deg')
+    payload_heading_speed_attrs['heading'] = (heading * 45, '°')
 
     speed = payload_heading_speed & 0b11111
     payload_heading_speed_attrs['speed-(bin)'] = _binify(speed, pad=5)
@@ -263,7 +285,8 @@ def _parse_position_msg_motion_payload(payload, payload_attrs):
     if time_of_day > (60 * 24) / 6:
         print(f'Error: unexpectedly large time-of-day {time_of_day}')
     payload_attrs['time-of-day-(min)'] = time_of_day * 6
-    payload_attrs['time-of-day'] = f'{time_of_day * 6 // 60:02d}:{time_of_day * 6 % 60:02d}'
+    hours, minutes = divmod(time_of_day * 6, 60)
+    payload_attrs['time-of-day'] = f'{hours:02d}:{minutes:02d}'
 
     heading_speed_attrs = collections.OrderedDict()
     payload_attrs['heading-speed'] = heading_speed_attrs
@@ -469,15 +492,15 @@ def _parse_eng_msg_payload_temperature(payload_temperature, payload_temperature_
 
     max_since_prev = payload_temperature[0]
     payload_temperature_attrs['max-since-prev-eng-msg-(hex)'] = _hexlify(max_since_prev)
-    payload_temperature_attrs['max-since-prev-eng-msg'] = (max_since_prev, 'deg C')
+    payload_temperature_attrs['max-since-prev-eng-msg'] = (max_since_prev, '°C')
 
     min_since_prev = payload_temperature[1]
     payload_temperature_attrs['min-since-prev-eng-msg-(hex)'] = _hexlify(min_since_prev)
-    payload_temperature_attrs['min-since-prev-eng-msg'] = (min_since_prev, 'deg C')
+    payload_temperature_attrs['min-since-prev-eng-msg'] = (min_since_prev, '°C')
 
     mean_since_prev = payload_temperature[2]
     payload_temperature_attrs['mean-since-prev-eng-msg-(hex)'] = _hexlify(mean_since_prev)
-    payload_temperature_attrs['mean-since-prev-eng-msg'] = (mean_since_prev, 'deg C')
+    payload_temperature_attrs['mean-since-prev-eng-msg'] = (mean_since_prev, '°C')
 
 def _parse_twos_complement(value, width):
     if (value & (1 << (width - 1))) != 0:
@@ -520,7 +543,7 @@ def _parse_eng_msg_payload(payload, payload_attrs):
     payload_attrs['last-reset-type-(bin)'] = _binify(last_reset_type, pad=4)
     payload_attrs['last-reset-type-(hex)'] = _hexlify(last_reset_type)
     if last_reset_type not in _eng_last_reset_types:
-        print(f'Error: unknown last reset type {last_reset_type}!')
+        print(f'Error: unknown last reset type 0x{last_reset_type:x}!')
     else:
         payload_attrs['last-reset-type'] = _eng_last_reset_types[last_reset_type]
 
@@ -577,7 +600,12 @@ def _decrypt_payload(msg_type, payload, key, payload_attrs):
         print('Warning: missing a key to decrypt the payload!')
         return None
     crypto = des.triple_des(key, pad=b'0xff')
-    return crypto.decrypt(payload)
+    try:
+        return crypto.decrypt(payload)
+    except ValueError as err:
+        print('Error: couldn\'t decrypt payload')
+        traceback.print_exc()
+        return None
 
 # All Messages
 
@@ -609,8 +637,10 @@ class IridiumSBD():
             msg (byte): A binary ISBD message (optional). If given, runs
                 load(msg).
         """
-        if msg is not None:
-            self.load(msg, key)
+        if msg is None:
+            return
+
+        self.load(msg, key)
 
     def __str__(self):
         return str(self.attrs)
@@ -622,7 +652,8 @@ class IridiumSBD():
 
         self.attrs['message-type-(hex)'] = _hexlify(raw[0])
         if raw[0] not in _sbd_mo_msg_types:
-            raise ValueError(f'unexpected message type {raw[0]}')
+            print(f'Error: Unexpected message type 0x{raw[0]:x}!')
+            return
         msg_type =  _sbd_mo_msg_types[raw[0]]
         self.attrs['message-type'] = msg_type
         if msg_type in _sbd_mo_encrypted_msg_types:
@@ -639,16 +670,18 @@ class IridiumSBD():
                 _check_msg_length(msg_type, raw, 7, 66)
                 self._parse_tlv_data_msg(raw[1:])
             case 'unencrypted-chained-position' | 'encrypted-chained-position':
-                _check_msg_length(msg_type, raw, 18, 66)
+                _check_msg_length(msg_type, raw, 8, 66)
                 self._parse_position_msg(msg_type, raw[1:], key)
             case 'unencrypted-engineering' | 'encrypted-engineering':
-                _check_msg_length(msg_type, raw, 34, 34)
+                _check_msg_length(msg_type, raw, 33, 33)
                 self._parse_eng_msg(msg_type, raw[1:], key)
 
     def _parse_position_msg(self, msg_type, raw, key):
         header_attrs = collections.OrderedDict()
         self.attrs['position-message-header'] = header_attrs
         msg_subtype = _parse_position_msg_header(raw[0], header_attrs)
+        if msg_subtype is None:
+            return
 
         match msg_subtype:
             case 'user-position':
@@ -695,9 +728,9 @@ class IridiumSBD():
             case 'nak':
                 _parse_nak_tlv(length, value, tlv_attrs)
             case _:
-                raise ValueError(f'Unknown TLV header type {header_type}!')
+                print(f'Error: unknown TLV header type 0x{header:x}!')
 
-        self.attrs['crc'] = f'0x{raw[len(raw)-3:]:x}'
+        self.attrs['crc'] = f'0x{_hexlify(raw[len(raw)-3:])}'
         # TODO: check CRC
 
     def _parse_eng_msg(self, msg_type, raw, key):
@@ -714,7 +747,8 @@ class IridiumSBD():
         _parse_eng_msg_payload(parseable_payload, payload_attrs)
 
 
-def _print_attrs(attrs, indent='', verbose=False):
+def print_attrs(attrs, indent='', verbose=False):
+    """Print a nested dict of attributes in quasi-YAML-ish syntax."""
     for key, value in attrs.items():
         if '(' in key and not verbose:
             continue
@@ -723,7 +757,7 @@ def _print_attrs(attrs, indent='', verbose=False):
         print(f'- {key}:', end='')
         if isinstance(value, collections.OrderedDict):
             print()
-            _print_attrs(value, indent=indent + '  ', verbose=verbose)
+            print_attrs(value, indent=indent + '  ', verbose=verbose)
             continue
         print(f' {value}')
 
@@ -731,4 +765,4 @@ def _print_attrs(attrs, indent='', verbose=False):
 def dump(raw, key, verbose=False):
     """Parse and display SBD message as structured data."""
     msg = IridiumSBD(raw, key)
-    _print_attrs(msg.attrs, verbose=verbose)
+    print_attrs(msg.attrs, verbose=verbose)

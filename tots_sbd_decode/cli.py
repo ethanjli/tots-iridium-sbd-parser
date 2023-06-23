@@ -21,10 +21,16 @@ def main():
         help='Path of SBD file to decode',
     )
     parser.add_argument(
-        '--key',
+        '-k', '--key',
         type=argparse.FileType('r'),
         required=False,
         help='Path of plain-text hex-encoded 3DES key file for decrypting encrypted SBD message',
+    )
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        default=False,
+        help='Print raw binary/hex encodings of parsed values',
     )
     args = parser.parse_args()
     print(f'Decoding \'{args.sbd.name}\'', end='')
@@ -36,7 +42,7 @@ def main():
             key = None
         key = binascii.unhexlify(key)
     print('...')
-    return parse.dump(args.sbd.read(), key)
+    return parse.dump(args.sbd.read(), key, verbose=args.verbose)
 
 
 if __name__ == '__main__':

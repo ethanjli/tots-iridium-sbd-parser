@@ -46,7 +46,7 @@ def main():
         key = binascii.unhexlify(key)
     print('...')
     msg = parse.IridiumSBD(args.sbd.read(), key)
-    print_attrs(msg.attrs, verbose=args.verbose)
+    parse.print_attrs(msg.attrs, verbose=args.verbose)
 
 
 if __name__ == '__main__':
